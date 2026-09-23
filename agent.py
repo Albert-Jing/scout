@@ -16,6 +16,7 @@ load_dotenv()  # puts ANTHROPIC_API_KEY from .env into the environment, where th
 
 MAX_TURNS = 25
 MAX_COST = 1.00
+DEFAULT_COUNT = 5
 
 
 @dataclass
@@ -31,7 +32,7 @@ class RunResult:
     pages_fetched: int
 
 
-def run_scout(target, model_key="haiku", max_turns=MAX_TURNS, max_cost=MAX_COST,
+def run_scout(target, model_key="haiku", count=DEFAULT_COUNT, max_turns=MAX_TURNS, max_cost=MAX_COST,
               use_cache=True, on_event=None):
     model = MODELS[model_key]
     client = anthropic.Anthropic()
@@ -49,7 +50,11 @@ def run_scout(target, model_key="haiku", max_turns=MAX_TURNS, max_cost=MAX_COST,
             print(text)
 
     # The whole conversation. It grows every turn and is re-sent in full every turn.
-    messages = [{"role": "user", "content": f"Today's date is {date.today():%B %d, %Y}.\n\nTarget: {target}"}]
+    messages = [{"role": "user", "content": (
+        f"Today's date is {date.today():%B %d, %Y}.\n\n"
+        f"Target: {target}\n\n"
+        f"Find the {count} best-matching people."
+    )}]
 
     while True:
         # Guardrail: stop at the turn limit or the dollar limit, whichever comes first.
@@ -123,11 +128,20 @@ def run_scout(target, model_key="haiku", max_turns=MAX_TURNS, max_cost=MAX_COST,
             results.append({"type": "tool_result", "tool_use_id": block.id,
                             "content": result_text, "is_error": is_error})
 
+        # Guardrail: stop as soon as we have enough people, so we don't pay for extra research.
+        if len(state.people) >= count:
+            stop_reason = f"found {count} people"
+            break
+
         # Tell Claude where it stands, so it saves people before the budget runs out instead of researching forever.
         spent = totals["dollars"]
+        used = max(spent / max_cost, turns / max_turns)  # fraction of the budget used, by $ or turns
         note = (f"[Scout status: turn {turns} of {max_turns}, ${spent:.2f} of ${max_cost:.2f} spent, "
-                f"{len(state.people)} people saved.]")
-        if spent >= 0.6 * max_cost or turns >= 0.6 * max_turns:
+                f"{len(state.people)} of {count} people saved.]")
+        if not state.people and used >= 0.4:
+            note += (" You have saved nobody and much of the budget is gone. Save your best candidates now "
+                     "with the evidence you already have.")
+        elif used >= 0.6:
             note += " Budget is running low: save everyone you already have evidence for now, then finish."
         results.append({"type": "text", "text": note})
         messages.append({"role": "user", "content": results})

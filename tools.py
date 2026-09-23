@@ -55,16 +55,28 @@ FETCH_PAGE = {
 SAVE_PERSON = {
     "name": "save_person",
     "description": (
-        "Save one person who fits the target. Every claim must come from a page you saw this run. "
-        "Leave out email, linkedin_url, or x_url if you didn't find them; never guess."
+        "Save one person who fits the target, as soon as you have one solid source. Every claim must come from "
+        "a page you saw this run. Leave out email, linkedin_url, or x_url if you didn't find them; never guess. "
+        "Calling it again for the same person adds newly found contact info and hooks."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
             "name": {"type": "string"},
-            "role": {"type": "string", "description": "Title, e.g. 'General Partner'."},
-            "firm": {"type": "string"},
+            "role": {"type": "string", "description": "Current title, e.g. 'Strategy & Operations Lead'."},
+            "firm": {"type": "string", "description": "Current company or firm."},
             "why_fit": {"type": "string", "description": "One or two sentences of evidence for how they match the target."},
+            "background": {
+                "type": "string",
+                "description": "One line on their path and style, e.g. 'ex-BCG consultant, joined Sierra 2025, "
+                               "posts often on X about ops'. Only what sources show.",
+            },
+            "hooks": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "2-4 specific, sourced facts worth mentioning in outreach: a post, talk, "
+                               "investment, launch, past employer, school. Put the source URL in parentheses.",
+            },
             "source_urls": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -73,9 +85,8 @@ SAVE_PERSON = {
             "email": {"type": "string", "description": "Only if written on a page you fetched."},
             "linkedin_url": {"type": "string"},
             "x_url": {"type": "string"},
-            "opener": {"type": "string", "description": "One-sentence personalized first line for outreach."},
         },
-        "required": ["name", "role", "firm", "why_fit", "source_urls", "opener"],
+        "required": ["name", "role", "firm", "why_fit", "background", "hooks", "source_urls"],
     },
 }
 
@@ -174,12 +185,15 @@ def fetch_page(url, state):
 
 
 def save_person(data, state):
-    required = ["name", "role", "firm", "why_fit", "opener"]
+    required = ["name", "role", "firm", "why_fit", "background"]
     missing = [f for f in required if not str(data.get(f, "")).strip()]
     if missing:
         return f"Rejected: missing {', '.join(missing)}.", True
 
     # Guardrail 1: sources are required, and must be pages this run actually saw.
+    hooks = [h.strip() for h in data.get("hooks") or [] if str(h).strip()]
+    if not hooks:
+        return "Rejected: add at least one sourced hook.", True
     sources = [u for u in data.get("source_urls") or [] if is_public_http_url(u)]
     if not sources:
         return "Rejected: at least one http(s) source URL is required.", True
@@ -211,8 +225,9 @@ def save_person(data, state):
         "why_fit": data["why_fit"].strip(),
         "email": email or "not found",
         **profiles,
+        "background": data["background"].strip(),
+        "hooks": hooks,
         "source_urls": sources,
-        "opener": data["opener"].strip(),
     }
     key = (person["name"].lower(), person["firm"].lower())
     existing = next((p for p in state.people if (p["name"].lower(), p["firm"].lower()) == key), None)
@@ -224,6 +239,10 @@ def save_person(data, state):
             existing[f] = person[f]
         new_sources = [u for u in sources if u not in existing["source_urls"]]
         existing["source_urls"] += new_sources
+        new_hooks = [h for h in hooks if h not in existing["hooks"]]
+        existing["hooks"] += new_hooks
+        if new_hooks:
+            added.append("hooks")
         if not added and not new_sources:
             message = f"Already saved {person['name']}; nothing new to add."
         else:
