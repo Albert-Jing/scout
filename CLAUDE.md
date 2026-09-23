@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What Scout is
 
-A research agent: given a target (e.g. "seed VCs in SF who led AI dev-tools rounds this year"), it returns 15-25 people with name, role, firm, why they fit, source links, public contact channels, and a drafted one-line opener. 
+A research agent plus an outreach writer: given any target in plain English (investors, operators at named startups, etc.), it finds the N best-matching people (default 5) with role, company, background, sourced hooks, and public contact channels, then drafts a tailored outreach message to each from the owner's private notes (`me.md`).
 
 ## Commands
 
@@ -13,8 +13,9 @@ source .venv/bin/activate                     # Python 3.13 venv; activate in ev
 pip install -r requirements.txt
 cp .env.example .env                          # then set ANTHROPIC_API_KEY and APP_PASSWORD
 
-python scout.py "<target>"                    # CLI run, Haiku by default (cheap; use for testing)
-python scout.py "<target>" --model sonnet --csv out.csv
+python scout.py "<target>"                    # CLI run: Haiku research + Sonnet drafts, 5 people
+python scout.py "<target>" --count 3 --model sonnet --csv out.csv
+python scout.py "<target>" --no-drafts        # research only
 python scout.py "<target>" --no-cache         # compare cost without prompt caching
 streamlit run app.py                          # web UI at http://localhost:8501
 ```
@@ -28,13 +29,14 @@ No agent framework on purpose: the loop is hand-written so every token and tool 
 - `agent.py` - `run_scout()` is the whole agent: call `client.messages.create` with the system prompt, tools, and the growing `messages` list; append Claude's full `response.content`; if `stop_reason == "tool_use"`, run each client tool and send all `tool_result` blocks back in one user message; if `pause_turn`, re-send unchanged; anything else ends the run. Emits progress through an `on_event` callback (the CLI prints it, the UI streams it).
 - `tools.py` - tool definitions plus their Python. `web_search` is a server tool (Anthropic runs it; Haiku needs `web_search_20250305`, Sonnet 5 / Opus 5.5 use `web_search_20260209`). `fetch_page` (httpx + BeautifulSoup) and `save_person` are client tools. `RunState` records every page fetched and every URL seen in search results or page links; the guardrails check against it.
 - `pricing.py` - model IDs, prices, and `turn_cost(usage)`, which prices uncached input, cache writes (1.25x), cache reads, output, and searches ($0.01 each).
-- `prompts.py` - the system prompt: who counts as a fit and the contact-info rules. The owner edits this.
+- `writer.py` - the outreach writer. Deliberately not an agent: one `client.messages.parse` call per person with a Pydantic `Draft` schema (reader, angle, fit, subject, message). Code picks the channel (email > LinkedIn > X); Claude picks tone and which parts of `me.md` to use. `me.md` is sent as a cached system block.
+- `prompts.py` - `SYSTEM_PROMPT` (researcher: fit rules, hooks, contact-info rules) and `WRITER_PROMPT` (tone, angle, channel formats). The owner edits these.
 - `db.py` - SQLite (`scout.db`, gitignored): a `runs` table and a `people` table.
 - `scout.py` - CLI. `app.py` - Streamlit UI with a password gate, a live log, a results table, CSV download, and run cost.
 
 ## Guardrails (never weaken these)
 
-- Every run stops at 25 turns or its dollar limit (default and UI maximum: $1.00), whichever comes first.
+- Every run stops at 25 turns, its dollar limit (default and UI maximum: $1.00), or once `count` people are saved, whichever comes first. Each tool-result message ends with a status line (turn, $ spent, people saved) that pushes Claude to save early; keep it.
 - `save_person` rejects a person unless at least one source URL was actually fetched or returned by search in this run.
 - An email is stored only if it appears verbatim on a page fetched this run; LinkedIn/X URLs only if seen this run. Otherwise the field is `"not found"`. Never guess or construct contact info, including in prompts or test data.
 
@@ -44,7 +46,7 @@ Haiku 4.5 (`claude-haiku-4-5`, $1/$5 per MTok) for development and testing; Sonn
 
 ## Secrets and deploy
 
-`.env` holds `ANTHROPIC_API_KEY` and `APP_PASSWORD` locally and is never committed. On Streamlit Community Cloud, the same two keys go in the app's Secrets settings; `app.py` copies them into the environment. The Cloud filesystem is temporary, so `scout.db` resets on redeploy; the CSV download is the durable output.
+`.env` holds `ANTHROPIC_API_KEY` and `APP_PASSWORD` locally and is never committed. `me.md` holds the owner's private background and is gitignored; never commit it, quote it in commits or docs, or copy its contents into any tracked file. `me.example.md` is the public template. When hosted, the notes come from an `ABOUT_ME` secret instead. On Streamlit Community Cloud, the same two keys go in the app's Secrets settings; `app.py` copies them into the environment. The Cloud filesystem is temporary, so `scout.db` resets on redeploy; the CSV download is the durable output.
 
 ## Working with the owner
 
