@@ -57,6 +57,18 @@ def save_person(conn, run_id, person):
     conn.commit()
 
 
+def update_person(conn, run_id, person):
+    conn.execute(
+        """UPDATE people SET email = ?, linkedin_url = ?, x_url = ?, source_urls = ?
+           WHERE run_id = ? AND name = ? AND firm = ?""",
+        (
+            person["email"], person["linkedin_url"], person["x_url"], json.dumps(person["source_urls"]),
+            run_id, person["name"], person["firm"],
+        ),
+    )
+    conn.commit()
+
+
 def save_run(conn, run_id, target, model, turns, cost, stop_reason):
     conn.execute(
         "INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?)",

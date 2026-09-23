@@ -28,7 +28,6 @@ class RunState:
     pages: dict = field(default_factory=dict)  # url -> lowercased page text (for email checks)
     seen_urls: set = field(default_factory=set)  # normalized URLs from fetched pages + search results
     people: list = field(default_factory=list)
-    saved_keys: set = field(default_factory=set)  # (name, firm) pairs, to skip duplicates
 
 
 # ---------- Tool definitions (what Claude sees) ----------
@@ -175,10 +174,6 @@ def save_person(data, state):
         return ("Rejected: none of these source URLs came from a search result or fetched page in this run. "
                 "Only cite pages you actually saw."), True
 
-    key = (data["name"].strip().lower(), data["firm"].strip().lower())
-    if key in state.saved_keys:
-        return f"Already saved {data['name']}; skipped duplicate.", False
-
     notes = []
 
     # Guardrail 2: an email must appear word-for-word on a page fetched this run.
@@ -206,11 +201,25 @@ def save_person(data, state):
         "source_urls": sources,
         "opener": data["opener"].strip(),
     }
-    db.save_person(state.conn, state.run_id, person)
-    state.people.append(person)
-    state.saved_keys.add(key)
-
-    message = f"Saved {person['name']} ({len(state.people)} people so far)."
+    key = (person["name"].lower(), person["firm"].lower())
+    existing = next((p for p in state.people if (p["name"].lower(), p["firm"].lower()) == key), None)
+    if existing:
+        # Same person again: keep the first record, but fill in contact info that's now verified.
+        added = [f for f in ("email", "linkedin_url", "x_url")
+                 if existing[f] == "not found" and person[f] != "not found"]
+        for f in added:
+            existing[f] = person[f]
+        new_sources = [u for u in sources if u not in existing["source_urls"]]
+        existing["source_urls"] += new_sources
+        if not added and not new_sources:
+            message = f"Already saved {person['name']}; nothing new to add."
+        else:
+            db.update_person(state.conn, state.run_id, existing)
+            message = f"Updated {person['name']}: added {', '.join(added) or 'sources'}."
+    else:
+        db.save_person(state.conn, state.run_id, person)
+        state.people.append(person)
+        message = f"Saved {person['name']} ({len(state.people)} people so far)."
     if notes:
         message += " Note: " + "; ".join(notes) + "."
     return message, False
