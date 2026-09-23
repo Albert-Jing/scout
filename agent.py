@@ -93,7 +93,14 @@ def run_scout(target, model_key="haiku", count=DEFAULT_COUNT, max_turns=MAX_TURN
              f"= ${cost['dollars']:.4f} (run total ${totals['dollars']:.4f})")
 
         # Append Claude's full reply (text, tool calls, search results) to the history.
-        messages.append({"role": "assistant", "content": response.content})
+        content = response.content
+        if response.stop_reason != "pause_turn":
+            # A search can be left without a result when Claude also calls one of our tools in the same reply.
+            # The API rejects that history on the next call, so drop searches that never finished.
+            # (On pause_turn the unfinished search is how the API knows to resume, so keep it.)
+            finished = {b.tool_use_id for b in content if b.type == "web_search_tool_result"}
+            content = [b for b in content if b.type != "server_tool_use" or b.id in finished]
+        messages.append({"role": "assistant", "content": content})
 
         for block in response.content:
             if block.type == "text" and block.text.strip():

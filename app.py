@@ -73,7 +73,9 @@ if st.button("Run Scout", type="primary", disabled=not target.strip()):
     if write_drafts and result.people:
         status.update(label="Drafting outreach...")
         draft_cost = draft_all(result.people, result.run_id, "sonnet", on_event=status.write)
-    status.update(label=f"Done: {result.stop_reason}", state="complete", expanded=False)
+    failed = result.stop_reason.startswith("API error")
+    status.update(label=f"{'Stopped' if failed else 'Done'}: {result.stop_reason}",
+                  state="error" if failed else "complete", expanded=failed)
     st.session_state.result = result  # keep it when the page reruns (e.g. after clicking download)
     st.session_state.draft_cost = draft_cost
 
