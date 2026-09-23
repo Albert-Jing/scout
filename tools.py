@@ -35,14 +35,15 @@ class RunState:
 def web_search_tool(model_key):
     # Haiku 4.5 only supports the older web search version; Sonnet 5 and Opus 5.5 get the newer one.
     version = "web_search_20250305" if model_key == "haiku" else "web_search_20260209"
-    return {"type": version, "name": "web_search", "max_uses": 5}
+    return {"type": version, "name": "web_search", "max_uses": 10}  # per API call; the $ limit is the real cap
 
 
 FETCH_PAGE = {
     "name": "fetch_page",
     "description": (
         "Download a web page and return its visible text, the links on it, and any emails it publishes. "
-        "Use it to read team pages, bios, and announcements found through web_search."
+        "Use it to read team pages, bios, and announcements found through web_search. "
+        "It can't run search engines; use web_search to search."
     ),
     "input_schema": {
         "type": "object",
@@ -104,13 +105,23 @@ def is_public_http_url(url):
         return True  # a domain name, not a raw IP
 
 
+def is_search_engine(url):
+    host = (urlparse(url).hostname or "").lower().removeprefix("www.")
+    return host in {"google.com", "bing.com", "duckduckgo.com", "html.duckduckgo.com", "search.yahoo.com"}
+
+
 def record_search_results(block, state):
-    """Remember every URL a web search returned, so save_person can accept them as sources."""
-    if isinstance(block.content, list):  # a list means success; an error comes back as a single object
-        for result in block.content:
-            url = getattr(result, "url", None)
-            if url:
-                state.seen_urls.add(normalize_url(url))
+    """Remember every URL a web search returned, so save_person can accept them as sources.
+
+    Returns the error code if the search failed, otherwise None.
+    """
+    if not isinstance(block.content, list):  # a list means success; an error comes back as a single object
+        return getattr(block.content, "error_code", "unknown_error")
+    for result in block.content:
+        url = getattr(result, "url", None)
+        if url:
+            state.seen_urls.add(normalize_url(url))
+    return None
 
 
 # ---------- Client tools (our code) ----------
@@ -118,6 +129,8 @@ def record_search_results(block, state):
 def fetch_page(url, state):
     if not is_public_http_url(url):
         return f"Refused: {url} is not a public http(s) URL.", True
+    if is_search_engine(url):
+        return "Refused: fetch_page can't run search engines. Use the web_search tool instead.", True
     try:
         response = httpx.get(url, timeout=15, follow_redirects=True, headers={"User-Agent": USER_AGENT})
         response.raise_for_status()

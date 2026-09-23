@@ -222,3 +222,4 @@ __marimo__/
 # Scout local data
 *.db
 .streamlit/secrets.toml
+*.csv

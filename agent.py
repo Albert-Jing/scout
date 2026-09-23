@@ -96,7 +96,9 @@ def run_scout(target, model_key="haiku", max_turns=MAX_TURNS, max_cost=MAX_COST,
             elif block.type == "server_tool_use" and block.name == "web_search":
                 emit(f"Search: {block.input.get('query')}")
             elif block.type == "web_search_tool_result":
-                record_search_results(block, state)
+                error = record_search_results(block, state)
+                if error:
+                    emit(f"Search failed: {error}")
 
         if response.stop_reason == "pause_turn":
             continue  # Anthropic's server-side search loop paused; re-send and it resumes.
@@ -120,6 +122,14 @@ def run_scout(target, model_key="haiku", max_turns=MAX_TURNS, max_cost=MAX_COST,
                 emit(("Error: " if is_error else "") + result_text.splitlines()[0][:300])
             results.append({"type": "tool_result", "tool_use_id": block.id,
                             "content": result_text, "is_error": is_error})
+
+        # Tell Claude where it stands, so it saves people before the budget runs out instead of researching forever.
+        spent = totals["dollars"]
+        note = (f"[Scout status: turn {turns} of {max_turns}, ${spent:.2f} of ${max_cost:.2f} spent, "
+                f"{len(state.people)} people saved.]")
+        if spent >= 0.6 * max_cost or turns >= 0.6 * max_turns:
+            note += " Budget is running low: save everyone you already have evidence for now, then finish."
+        results.append({"type": "text", "text": note})
         messages.append({"role": "user", "content": results})
 
     db.save_run(conn, state.run_id, target, model_key, turns, totals["dollars"], stop_reason)
