@@ -223,3 +223,6 @@ __marimo__/
 *.db
 .streamlit/secrets.toml
 *.csv
+
+# Private notes about me (never commit)
+me.md
