@@ -27,6 +27,8 @@ class RunResult:
     stop_reason: str
     summary: str
     totals: dict
+    model_id: str
+    pages_fetched: int
 
 
 def run_scout(target, model_key="haiku", max_turns=MAX_TURNS, max_cost=MAX_COST,
@@ -38,7 +40,7 @@ def run_scout(target, model_key="haiku", max_turns=MAX_TURNS, max_cost=MAX_COST,
     tools = [web_search_tool(model_key), *CLIENT_TOOLS]
 
     totals = {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0, "searches": 0, "dollars": 0.0}
-    turns, summary, stop_reason = 0, "", "finished"
+    turns, pages_fetched, summary, stop_reason = 0, 0, "", "finished"
 
     def emit(text):
         if on_event:
@@ -81,8 +83,9 @@ def run_scout(target, model_key="haiku", max_turns=MAX_TURNS, max_cost=MAX_COST,
         cost = turn_cost(response.usage, model_key)
         for k in totals:
             totals[k] += cost[k]
-        emit(f"Turn {turns}: {cost['input']:,} in, {cost['cache_read']:,} cached, {cost['output']:,} out, "
-             f"{cost['searches']} searches = ${cost['dollars']:.4f} (run total ${totals['dollars']:.4f})")
+        emit(f"Turn {turns}: {cost['input']:,} new in, {cost['cache_write']:,} cache write, "
+             f"{cost['cache_read']:,} cache read, {cost['output']:,} out, {cost['searches']} searches "
+             f"= ${cost['dollars']:.4f} (run total ${totals['dollars']:.4f})")
 
         # Append Claude's full reply (text, tool calls, search results) to the history.
         messages.append({"role": "assistant", "content": response.content})
@@ -98,7 +101,8 @@ def run_scout(target, model_key="haiku", max_turns=MAX_TURNS, max_cost=MAX_COST,
         if response.stop_reason == "pause_turn":
             continue  # Anthropic's server-side search loop paused; re-send and it resumes.
         if response.stop_reason != "tool_use":
-            summary = "\n".join(b.text for b in response.content if b.type == "text").strip()
+            # Search citations split the reply into many text blocks; glue them back together.
+            summary = "".join(b.text for b in response.content if b.type == "text").strip()
             if response.stop_reason != "end_turn":
                 stop_reason = f"model stopped: {response.stop_reason}"
             break
@@ -109,6 +113,7 @@ def run_scout(target, model_key="haiku", max_turns=MAX_TURNS, max_cost=MAX_COST,
             if block.type != "tool_use":
                 continue
             if block.name == "fetch_page":
+                pages_fetched += 1
                 emit(f"Fetch: {block.input.get('url')}")
             result_text, is_error = run_client_tool(block.name, block.input, state)
             if block.name == "save_person" or is_error:
@@ -120,4 +125,5 @@ def run_scout(target, model_key="haiku", max_turns=MAX_TURNS, max_cost=MAX_COST,
     db.save_run(conn, state.run_id, target, model_key, turns, totals["dollars"], stop_reason)
     conn.close()
     emit(f"Stopped: {stop_reason}. {len(state.people)} people, ${totals['dollars']:.4f}.")
-    return RunResult(state.run_id, state.people, totals["dollars"], turns, stop_reason, summary, totals)
+    return RunResult(state.run_id, state.people, totals["dollars"], turns, stop_reason, summary, totals,
+                     model["id"], pages_fetched)

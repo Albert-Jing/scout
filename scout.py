@@ -29,14 +29,19 @@ def main():
 
     result = run_scout(args.target, args.model, args.max_turns, args.max_cost, use_cache=not args.no_cache)
 
-    print(f"\n{len(result.people)} people | {result.turns} turns | ${result.cost:.4f} | stopped: {result.stop_reason}\n")
+    t = result.totals
+    print(f"\n{len(result.people)} people | model {result.model_id} | {result.turns} turns | "
+          f"{t['searches']} searches | {result.pages_fetched} pages fetched | ${result.cost:.4f} | "
+          f"stopped: {result.stop_reason}")
+    print(f"Tokens: {t['input']:,} new input, {t['cache_write']:,} cache writes, "
+          f"{t['cache_read']:,} cache reads, {t['output']:,} output\n")
     for p in result.people:
         print(f"- {p['name']}, {p['role']} at {p['firm']}")
         print(f"    why: {p['why_fit']}")
         print(f"    email: {p['email']} | linkedin: {p['linkedin_url']} | x: {p['x_url']}")
         print(f"    opener: {p['opener']}")
     if result.summary:
-        print(f"\n{result.summary}")
+        print(f"\nClaude's summary (unchecked; the list above is what passed the guardrails):\n{result.summary}")
     if args.csv:
         write_csv(result.people, args.csv)
         print(f"\nWrote {args.csv}")

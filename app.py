@@ -70,11 +70,12 @@ if result:
     c3.metric("Turns", result.turns)
     c4.metric("Searches", result.totals["searches"])
     st.caption(
+        f"Model {result.model_id} · {result.pages_fetched} pages fetched · "
         f"Tokens: {result.totals['input']:,} input, {result.totals['cache_write']:,} cache writes, "
         f"{result.totals['cache_read']:,} cache reads, {result.totals['output']:,} output"
     )
     if result.summary:
-        st.info(result.summary)
+        st.info("Claude's summary (unchecked; the table is what passed the guardrails):\n\n" + result.summary)
     if result.people:
         df = pd.DataFrame(result.people)
         df["source_urls"] = df["source_urls"].apply(" ".join)
